@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import time
@@ -318,18 +319,18 @@ def main():
     main entry point
     """
 
-    # tlad/vgain below are tuned for the Oschersleben raceline (tighter corners than example_map);
-    # the original CMA-ES-optimized values (tlad=0.82, vgain=1.375) were fit to example_map and
-    # cause the car to run off-track on this map's hairpin (~radius 3m, around s=32-38m).
-    work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 3.0, 'vgain': 0.3}
+    # tuned for oschersleben_map_wide (track boundaries redrawn at 1.6m/side instead of the
+    # original 1.1m/side -- at the original width, no tlad/vgain combo we tried could clear
+    # the ~3m-radius hairpin around s=32-38m without running off-track).
+    work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 2.0, 'vgain': 0.7}
 
     enable_render = False  # live pyglet window needs a display/GL context -- unsafe over SSH
     save_video = True      # render the driven trajectory to an MP4 after the run instead
-    video_stride = 5       # keep every Nth logged step (speeds up rendering, NOT playback length)
+    video_stride = 20       # keep every Nth logged step (speeds up rendering, NOT playback length)
     video_playback_speed = 1.0  # >1 = shorter/faster video, <1 = slow motion
-    num_laps = 10           # env's own `done` hardcodes a 2-lap stop, so we track laps ourselves
+    num_laps = 3           # env's own `done` hardcodes a 2-lap stop, so we track laps ourselves
 
-    with open('config_oschersleben.yaml') as file:
+    with open('config_oschersleben_wide.yaml') as file:
         conf_dict = yaml.load(file, Loader=yaml.FullLoader)
     conf = Namespace(**conf_dict)
 
@@ -363,9 +364,10 @@ def main():
     laptime = 0.0
     start = time.time()
 
-    log = {'x': [], 'y': [], 'yaw': []}
+    log = {'x': [], 'y': [], 'yaw': [], 'lap_counts': [], 'collisions': [], 'speed': [], 'steer': []}
 
     while not obs['collisions'][0] and obs['lap_counts'][0] < num_laps:
+    # while obs['lap_counts'][0] < num_laps:
         speed, steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
         obs, step_reward, done, info = env.step(np.array([[steer, speed]]))
         laptime += step_reward
@@ -373,6 +375,11 @@ def main():
         log['x'].append(obs['poses_x'][0])
         log['y'].append(obs['poses_y'][0])
         log['yaw'].append(obs['poses_theta'][0])
+        log['lap_counts'].append(obs['lap_counts'][0])
+        log['collisions'].append(obs['collisions'][0])
+        log['speed'].append(speed)
+        log['steer'].append(steer)
+
 
         if enable_render:
             env.render(mode='human')
@@ -400,6 +407,7 @@ def main():
                                           playback_speed=video_playback_speed,
                                           left_bound=left_bound, right_bound=right_bound)
         print('Video saved to', video_path)
-
+    with open(f'map_{conf.run_name}_lap{num_laps}.json', 'w') as f:
+        json.dump({key: np.asarray(val).tolist() for key, val in log.items()}, f)
 if __name__ == '__main__':
     main()
