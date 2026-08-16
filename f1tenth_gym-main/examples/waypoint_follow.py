@@ -1,3 +1,5 @@
+import os
+import shutil
 import time
 from f110_gym.envs.base_classes import Integrator
 import yaml
@@ -8,6 +10,11 @@ from argparse import Namespace
 from numba import njit
 
 from pyglet.gl import GL_POINTS
+
+import matplotlib
+matplotlib.use('Agg')  # headless: no display/GL context needed (SSH-safe)
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 """
 Planner Helpers
@@ -238,14 +245,91 @@ class FlippyPlanner:
         return self.speed, self.steer
 
 
+def compute_track_boundaries(centerline_xy, w_right, w_left):
+    """
+    Offsets a closed centerline polyline perpendicular to its local tangent by
+    the given per-point right/left track widths, returning (left, right) boundary
+    polylines. w_right/w_left are 1D arrays, one value per centerline point.
+    """
+    tangents = np.empty_like(centerline_xy)
+    tangents[1:-1] = centerline_xy[2:] - centerline_xy[:-2]
+    tangents[0] = centerline_xy[1] - centerline_xy[-1]
+    tangents[-1] = centerline_xy[0] - centerline_xy[-2]
+    norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    tangents /= norms
+
+    left_normal = np.stack([-tangents[:, 1], tangents[:, 0]], axis=1)
+    left_bound = centerline_xy + left_normal * w_left[:, None]
+    right_bound = centerline_xy - left_normal * w_right[:, None]
+    return left_bound, right_bound
+
+
+def render_log_to_video(log, waypoints_xy, video_path, timestep, stride=1, playback_speed=1.0,
+                         left_bound=None, right_bound=None):
+    """
+    Renders a logged run (x, y, yaw per step) to an MP4 by animating the car
+    over the waypoint track. Headless (Agg backend) so it works over SSH.
+    """
+    xs = log['x'][::stride]
+    ys = log['y'][::stride]
+    yaws = log['yaw'][::stride]
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    if left_bound is not None and right_bound is not None:
+        ax.plot(left_bound[:, 0], left_bound[:, 1], '-', color='black', linewidth=1, zorder=1)
+        ax.plot(right_bound[:, 0], right_bound[:, 1], '-', color='black', linewidth=1, zorder=1)
+    ax.plot(waypoints_xy[:, 0], waypoints_xy[:, 1], '--', color='lightgray', linewidth=1, zorder=1)
+    ax.set_aspect('equal')
+    margin = 5.0
+    ax.set_xlim(waypoints_xy[:, 0].min() - margin, waypoints_xy[:, 0].max() + margin)
+    ax.set_ylim(waypoints_xy[:, 1].min() - margin, waypoints_xy[:, 1].max() + margin)
+    ax.set_title('Pure Pursuit')
+
+    trail, = ax.plot([], [], '-', color='red', linewidth=1, alpha=0.5, zorder=2)
+    car_dot, = ax.plot([], [], 'o', color='red', markersize=8, zorder=3)
+    heading_line, = ax.plot([], [], '-', color='blue', linewidth=2, zorder=4)
+
+    def update(i):
+        x, y, yaw = xs[i], ys[i], yaws[i]
+        trail.set_data(xs[:i + 1], ys[:i + 1])
+        car_dot.set_data([x], [y])
+        heading_line.set_data([x, x + 1.5 * np.cos(yaw)], [y, y + 1.5 * np.sin(yaw)])
+        return trail, car_dot, heading_line
+
+    anim = FuncAnimation(fig, update, frames=len(xs), blit=True)
+    fps = max(1.0, playback_speed / (timestep * stride))
+
+    if shutil.which('ffmpeg') is not None:
+        anim.save(video_path, writer='ffmpeg', fps=fps)
+    else:
+        gif_path = os.path.splitext(video_path)[0] + '.gif'
+        print('ffmpeg not found on PATH; saving a GIF instead (install ffmpeg, or `pip install '
+              'imageio-ffmpeg`, for real MP4 output).')
+        anim.save(gif_path, writer='pillow', fps=fps)
+        video_path = gif_path
+
+    plt.close(fig)
+    return video_path
+
+
 def main():
     """
     main entry point
     """
 
-    work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 0.82461887897713965, 'vgain': 1.375}#0.90338203837889}
-    
-    with open('config_example_map.yaml') as file:
+    # tlad/vgain below are tuned for the Oschersleben raceline (tighter corners than example_map);
+    # the original CMA-ES-optimized values (tlad=0.82, vgain=1.375) were fit to example_map and
+    # cause the car to run off-track on this map's hairpin (~radius 3m, around s=32-38m).
+    work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 3.0, 'vgain': 0.3}
+
+    enable_render = False  # live pyglet window needs a display/GL context -- unsafe over SSH
+    save_video = True      # render the driven trajectory to an MP4 after the run instead
+    video_stride = 5       # keep every Nth logged step (speeds up rendering, NOT playback length)
+    video_playback_speed = 1.0  # >1 = shorter/faster video, <1 = slow motion
+    num_laps = 10           # env's own `done` hardcodes a 2-lap stop, so we track laps ourselves
+
+    with open('config_oschersleben.yaml') as file:
         conf_dict = yaml.load(file, Loader=yaml.FullLoader)
     conf = Namespace(**conf_dict)
 
@@ -273,18 +357,49 @@ def main():
     env.add_render_callback(render_callback)
     
     obs, step_reward, done, info = env.reset(np.array([[conf.sx, conf.sy, conf.stheta]]))
-    env.render()
+    if enable_render:
+        env.render()
 
     laptime = 0.0
     start = time.time()
 
-    while not done:
+    log = {'x': [], 'y': [], 'yaw': []}
+
+    while not obs['collisions'][0] and obs['lap_counts'][0] < num_laps:
         speed, steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
         obs, step_reward, done, info = env.step(np.array([[steer, speed]]))
         laptime += step_reward
-        env.render(mode='human')
-        
+
+        log['x'].append(obs['poses_x'][0])
+        log['y'].append(obs['poses_y'][0])
+        log['yaw'].append(obs['poses_theta'][0])
+
+        if enable_render:
+            env.render(mode='human')
+
+    if obs['collisions'][0]:
+        print('Collided after %.1f laps' % obs['lap_counts'][0])
+    else:
+        print('Completed %d laps' % num_laps)
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
+
+    if save_video:
+        for key in log:
+            log[key] = np.array(log[key])
+        waypoints_xy = np.vstack((planner.waypoints[:, conf.wpt_xind], planner.waypoints[:, conf.wpt_yind])).T
+
+        left_bound = right_bound = None
+        if hasattr(conf, 'centerline_path'):
+            centerline = np.loadtxt(conf.centerline_path, delimiter=conf.centerline_delim,
+                                     skiprows=conf.centerline_rowskip)
+            left_bound, right_bound = compute_track_boundaries(
+                centerline[:, 0:2], w_right=centerline[:, 2], w_left=centerline[:, 3])
+
+        video_path = render_log_to_video(log, waypoints_xy, conf.run_name + '_video.mp4',
+                                          timestep=env.timestep, stride=video_stride,
+                                          playback_speed=video_playback_speed,
+                                          left_bound=left_bound, right_bound=right_bound)
+        print('Video saved to', video_path)
 
 if __name__ == '__main__':
     main()
