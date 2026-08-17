@@ -17,6 +17,10 @@ import sys
 
 import numpy as np
 
+# examples/suport/json_to_npz.py -> examples/ -> examples/results/
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'results')
+
 
 def convert(json_path):
     with open(json_path) as f:
@@ -32,9 +36,9 @@ def convert(json_path):
 
 
 def main():
-    paths = sys.argv[1:] or glob.glob('map_*.json')
+    paths = sys.argv[1:] or glob.glob(os.path.join(RESULTS_DIR, 'map_*.json'))
     if not paths:
-        print('No JSON log files found (expected map_*.json in the current directory).')
+        print(f'No JSON log files found (expected map_*.json in {RESULTS_DIR}).')
         return
     for path in paths:
         convert(path)

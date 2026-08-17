@@ -13,12 +13,18 @@ center-to-center, so keep HALF_WIDTH_M comfortably under 2.0m (2.0m each side
 overlapping and merge separate track passages. 1.6m was the validated value
 used for config_oschersleben_wide.yaml.
 """
+import os
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 import sys
 
-sys.path.insert(0, '.')
+# examples/suport/generate_wide_map.py -> examples/ -> examples/maps/
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+EXAMPLES_DIR = os.path.dirname(SCRIPT_DIR)
+MAPS_DIR = os.path.join(EXAMPLES_DIR, 'maps')
+
+sys.path.insert(0, EXAMPLES_DIR)
 from waypoint_follow import compute_track_boundaries
 
 HALF_WIDTH_M = 1.5  # <-- change this (meters, each side of centerline)
@@ -29,10 +35,10 @@ ORIGIN_X, ORIGIN_Y = -55.07650228661655, -33.57884064395765
 
 
 def main():
-    orig_img = Image.open('oschersleben_map.png')
+    orig_img = Image.open(os.path.join(MAPS_DIR, 'oschersleben_map.png'))
     w, h = orig_img.size
 
-    centerline = np.loadtxt('oschersleben_centerline.csv', delimiter=',', skiprows=1)
+    centerline = np.loadtxt(os.path.join(MAPS_DIR, 'oschersleben_centerline.csv'), delimiter=',', skiprows=1)
     xy = centerline[:, 0:2]
 
     w_right_new = np.full(len(xy), HALF_WIDTH_M)
@@ -51,9 +57,10 @@ def main():
     draw = ImageDraw.Draw(canvas)
     draw.line([tuple(p) for p in left_px] + [tuple(left_px[0])], fill=0, width=2, joint='curve')
     draw.line([tuple(p) for p in right_px] + [tuple(right_px[0])], fill=0, width=2, joint='curve')
-    canvas.save('oschersleben_map_wide.png')
+    wide_map_path = os.path.join(MAPS_DIR, 'oschersleben_map_wide.png')
+    canvas.save(wide_map_path)
 
-    with open('oschersleben_map_wide.yaml', 'w') as f:
+    with open(os.path.join(MAPS_DIR, 'oschersleben_map_wide.yaml'), 'w') as f:
         f.write(f'image: oschersleben_map_wide.png\n')
         f.write(f'resolution: {RESOLUTION}\n')
         f.write(f'origin: [{ORIGIN_X},{ORIGIN_Y}, 0.000000]\n')
@@ -62,7 +69,7 @@ def main():
         f.write('free_thresh: 0.196\n')
 
     out = np.column_stack([xy, w_right_new, w_left_new])
-    np.savetxt('oschersleben_centerline_wide.csv', out, delimiter=',',
+    np.savetxt(os.path.join(MAPS_DIR, 'oschersleben_centerline_wide.csv'), out, delimiter=',',
                header='x_m, y_m, w_tr_right_m, w_tr_left_m', comments='# ')
 
     print(f'Generated oschersleben_map_wide.png/.yaml and oschersleben_centerline_wide.csv '
@@ -71,7 +78,7 @@ def main():
     # sanity check: verify topology wasn't broken (should still be 3 free-space
     # components: outside / track corridor / interior island; and known-good
     # points should stay in the same corridor component)
-    arr = np.array(Image.open('oschersleben_map_wide.png'))
+    arr = np.array(Image.open(wide_map_path))
     free = arr >= 128
     labeled, num = ndimage.label(free)
     print(f'free-space components: {num} (expect 3 -- if this changed, HALF_WIDTH_M is too large '

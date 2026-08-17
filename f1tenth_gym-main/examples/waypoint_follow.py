@@ -17,6 +17,11 @@ matplotlib.use('Agg')  # headless: no display/GL context needed (SSH-safe)
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
+# folder layout (examples/waypoint_follow.py, examples/maps/, examples/results/)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MAPS_DIR = os.path.join(BASE_DIR, 'maps')
+RESULTS_DIR = os.path.join(BASE_DIR, 'results')
+
 """
 Planner Helpers
 """
@@ -330,9 +335,16 @@ def main():
     video_playback_speed = 1.0  # >1 = shorter/faster video, <1 = slow motion
     num_laps = 3           # env's own `done` hardcodes a 2-lap stop, so we track laps ourselves
 
-    with open('config_oschersleben_wide.yaml') as file:
+    with open(os.path.join(MAPS_DIR, 'config_oschersleben_wide.yaml')) as file:
         conf_dict = yaml.load(file, Loader=yaml.FullLoader)
     conf = Namespace(**conf_dict)
+
+    # config files store bare/relative filenames (e.g. './oschersleben_map_wide');
+    # resolve them against maps/ regardless of where this script is run from
+    conf.map_path = os.path.join(MAPS_DIR, os.path.basename(conf.map_path))
+    conf.wpt_path = os.path.join(MAPS_DIR, os.path.basename(conf.wpt_path))
+    if hasattr(conf, 'centerline_path'):
+        conf.centerline_path = os.path.join(MAPS_DIR, os.path.basename(conf.centerline_path))
 
     planner = PurePursuitPlanner(conf, (0.17145+0.15875)) #FlippyPlanner(speed=0.2, flip_every=1, steer=10)
 
@@ -390,6 +402,8 @@ def main():
         print('Completed %d laps' % num_laps)
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
 
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+
     if save_video:
         for key in log:
             log[key] = np.array(log[key])
@@ -402,12 +416,14 @@ def main():
             left_bound, right_bound = compute_track_boundaries(
                 centerline[:, 0:2], w_right=centerline[:, 2], w_left=centerline[:, 3])
 
-        video_path = render_log_to_video(log, waypoints_xy, conf.run_name + '_video.mp4',
+        video_path = render_log_to_video(log, waypoints_xy,
+                                          os.path.join(RESULTS_DIR, conf.run_name + '_video.mp4'),
                                           timestep=env.timestep, stride=video_stride,
                                           playback_speed=video_playback_speed,
                                           left_bound=left_bound, right_bound=right_bound)
         print('Video saved to', video_path)
-    with open(f'map_{conf.run_name}_lap{num_laps}.json', 'w') as f:
+    json_path = os.path.join(RESULTS_DIR, f'map_{conf.run_name}_lap{num_laps}.json')
+    with open(json_path, 'w') as f:
         json.dump({key: np.asarray(val).tolist() for key, val in log.items()}, f)
 if __name__ == '__main__':
     main()
