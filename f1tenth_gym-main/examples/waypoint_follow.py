@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import time
@@ -273,10 +272,6 @@ def compute_track_boundaries(centerline_xy, w_right, w_left):
 
 def render_log_to_video(log, waypoints_xy, video_path, timestep, stride=1, playback_speed=1.0,
                          left_bound=None, right_bound=None):
-    """
-    Renders a logged run (x, y, yaw per step) to an MP4 by animating the car
-    over the waypoint track. Headless (Agg backend) so it works over SSH.
-    """
     xs = log['x'][::stride]
     ys = log['y'][::stride]
     yaws = log['yaw'][::stride]
@@ -324,23 +319,18 @@ def main():
     main entry point
     """
 
-    # tuned for oschersleben_map_wide (track boundaries redrawn at 1.6m/side instead of the
-    # original 1.1m/side -- at the original width, no tlad/vgain combo we tried could clear
-    # the ~3m-radius hairpin around s=32-38m without running off-track).
     work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 2.0, 'vgain': 0.7}
 
     enable_render = False  # live pyglet window needs a display/GL context -- unsafe over SSH
-    save_video = True      # render the driven trajectory to an MP4 after the run instead
-    video_stride = 20       # keep every Nth logged step (speeds up rendering, NOT playback length)
-    video_playback_speed = 1.0  # >1 = shorter/faster video, <1 = slow motion
-    num_laps = 3           # env's own `done` hardcodes a 2-lap stop, so we track laps ourselves
+    save_video = False      
+    video_stride = 5      
+    video_playback_speed = 10.0  
+    num_laps = 10          
 
     with open(os.path.join(MAPS_DIR, 'config_oschersleben_wide.yaml')) as file:
         conf_dict = yaml.load(file, Loader=yaml.FullLoader)
     conf = Namespace(**conf_dict)
 
-    # config files store bare/relative filenames (e.g. './oschersleben_map_wide');
-    # resolve them against maps/ regardless of where this script is run from
     conf.map_path = os.path.join(MAPS_DIR, os.path.basename(conf.map_path))
     conf.wpt_path = os.path.join(MAPS_DIR, os.path.basename(conf.wpt_path))
     if hasattr(conf, 'centerline_path'):
@@ -422,8 +412,7 @@ def main():
                                           playback_speed=video_playback_speed,
                                           left_bound=left_bound, right_bound=right_bound)
         print('Video saved to', video_path)
-    json_path = os.path.join(RESULTS_DIR, f'map_{conf.run_name}_lap{num_laps}.json')
-    with open(json_path, 'w') as f:
-        json.dump({key: np.asarray(val).tolist() for key, val in log.items()}, f)
+    npz_path = os.path.join(RESULTS_DIR, f'map_{conf.run_name}_lap{num_laps}.npz')
+    np.savez_compressed(npz_path, **{key: np.asarray(val) for key, val in log.items()})
 if __name__ == '__main__':
     main()
