@@ -1,0 +1,15 @@
+# Python 3.9 pinned dependencies for the auto_car DeepONet/MPC project, chosen
+# to coexist with f1tenth_gym's setup.py pin of numpy<=1.22.0 in the same env.
+# jax==0.4.30 hard-removed jax.core.Shape (AttributeError on access), which
+# chex<0.1.86 still references; chex>=0.1.86 needs numpy>=1.24.1, conflicting
+# with the numpy<=1.22.0 ceiling. jax==0.4.18 predates that deprecation
+# entirely (Shape isn't even in its deprecation table), so old chex works fine.
+# jaxlib must match the jax version; 0.4.18 is also the oldest with a Windows wheel.
+jax==0.4.18
+jaxlib==0.4.18
+numpy==1.22.0
+scipy==1.11.4
+matplotlib==3.8.4
+optax==0.2.1
+pyyaml==6.0.3
+casadi==3.7.2
