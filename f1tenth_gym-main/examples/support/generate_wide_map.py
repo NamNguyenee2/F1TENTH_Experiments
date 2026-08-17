@@ -27,7 +27,7 @@ MAPS_DIR = os.path.join(EXAMPLES_DIR, 'maps')
 sys.path.insert(0, EXAMPLES_DIR)
 from waypoint_follow import compute_track_boundaries
 
-HALF_WIDTH_M = 1.5  # <-- change this (meters, each side of centerline)
+HALF_WIDTH_M = 1.2  # <-- change this (meters, each side of centerline)
 
 # original map metadata (must match oschersleben_map.yaml)
 RESOLUTION = 0.04295
