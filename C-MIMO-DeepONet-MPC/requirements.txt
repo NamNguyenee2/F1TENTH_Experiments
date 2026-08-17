@@ -1,0 +1,11 @@
+# Python 3.9 pinned dependencies for the auto_car DeepONet/MPC project.
+# jax==0.4.30 is the last release supporting Python 3.9; other pins are the
+# newest versions of each package still compatible with jax 0.4.30 on 3.9.
+jax==0.4.30
+jaxlib==0.4.30
+numpy==2.0.2
+scipy==1.13.1
+matplotlib==3.9.4
+optax==0.2.4
+pyyaml==6.0.3
+casadi==3.7.2
